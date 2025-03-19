@@ -1,44 +1,159 @@
-import java.io.BufferedReader;
-import java.io.FileReader;
-import java.io.FileWriter;
-import java.io.IOException;
+import java.io.*;
+import java.net.*;
+import java.util.*;
 
-public class CsvToJson {
-    public static void main(String[] args) {
-        String csvFile = "input.csv"; // 入力CSVファイルのパス
-        String jsonFile = "output.json"; // 出力JSONファイルのパス
-        String line; // CSVファイルから読み込んだ1行を格納する変数
-        String csvSplitBy = ","; // CSVの区切り文字
+public class JsonFileServer {
+    private static final String FILE_DIRECTORY = "C:\\tsv_files\\"; // TSVファイルの保存場所
 
-        try (BufferedReader br = new BufferedReader(new FileReader(csvFile));
-             FileWriter fw = new FileWriter(jsonFile)) {
-            String[] headers = br.readLine().split(csvSplitBy); // CSVのヘッダー行を読み込み、カラム名を取得
-            StringBuilder jsonBuilder = new StringBuilder(); // JSON文字列を構築するためのStringBuilder
-            jsonBuilder.append("[\n"); // JSON配列の開始
+    public static void main(String[] args) {
+        int port = 8080; // サーバーのポート番号
+        System.out.println("JSON 提供サーバーをポート " + port + " で起動中...");
 
-            while ((line = br.readLine()) != null) { // CSVファイルの各行を読み込む
-                String[] values = line.split(csvSplitBy); // 行をカンマで分割して値を取得
-                jsonBuilder.append("  {\n"); // JSONオブジェクトの開始
-                for (int i = 0; i < headers.length; i++) {
-                    jsonBuilder.append("    \"").append(headers[i]).append("\": \"").append(values[i]).append("\""); // カラム名と値をJSON形式で追加
-                    if (i < headers.length - 1) {
-                        jsonBuilder.append(","); // 最後のカラムでない場合はカンマを追加
-                    }
-                    jsonBuilder.append("\n");
-                }
-                jsonBuilder.append("  }"); // JSONオブジェクトの終了
-                if (br.ready()) {
-                    jsonBuilder.append(","); // 最後の行でない場合はカンマを追加
-                }
-                jsonBuilder.append("\n");
-            }
-            jsonBuilder.append("]"); // JSON配列の終了
+        try (ServerSocket serverSocket = new ServerSocket(port)) {
+            while (true) {
+                Socket clientSocket = serverSocket.accept();
+                new Thread(new ClientHandler(clientSocket)).start();
+            }
+        } catch (IOException e) {
+            System.err.println("エラー: サーバーの起動に失敗しました - " + e.getMessage());
+        }
+    }
+}
 
-            // JSONをファイルに書き込む
-            fw.write(jsonBuilder.toString());
-            System.out.println("JSONファイルが出力されました: " + jsonFile); // 出力完了メッセージ
-        } catch (IOException e) {
-            e.printStackTrace(); // エラーメッセージを表示
-        }
-    }
+/**
+ * クライアント（PC2）からのリクエストを処理するスレッド
+ */
+class ClientHandler implements Runnable {
+    private final Socket clientSocket;
+
+    public ClientHandler(Socket socket) {
+        this.clientSocket = socket;
+    }
+
+    @Override
+    public void run() {
+        try (
+            InputStream input = clientSocket.getInputStream();
+            OutputStream output = clientSocket.getOutputStream();
+            BufferedReader reader = new BufferedReader(new InputStreamReader(input, "UTF-8"));
+            PrintWriter writer = new PrintWriter(new OutputStreamWriter(output, "UTF-8"), true)
+        ) {
+            String line;
+            String fileName = null;
+
+            // HTTPリクエストを解析
+            while (!(line = reader.readLine()).isEmpty()) {
+                if (line.startsWith("GET")) {
+                    String[] parts = line.split(" ");
+                    if (parts.length > 1) {
+                        fileName = parts[1].substring(1); // "/sample.tsv" → "sample.tsv"
+                    }
+                }
+            }
+
+            if (fileName == null || fileName.isEmpty()) {
+                sendResponse(writer, 400, "エラー: ファイル名が指定されていません");
+                return;
+            }
+
+            File tsvFile = new File(JsonFileServer.FILE_DIRECTORY + fileName);
+            if (!tsvFile.exists() || !tsvFile.isFile()) {
+                sendResponse(writer, 404, "エラー: 指定された TSV ファイルが見つかりません: " + fileName);
+                return;
+            }
+
+            // TSV を JSON に変換
+            List<Map<String, String>> jsonData = convertTsvToJson(tsvFile);
+            String jsonString = listToJsonString(jsonData);
+
+            // ヘッダーを送信
+            writer.println("HTTP/1.1 200 OK");
+            writer.println("Content-Type: application/json");
+            writer.println("Content-Length: " + jsonString.length());
+            writer.println();
+            writer.flush();
+
+            // JSONデータを送信
+            writer.println(jsonString);
+        } catch (IOException e) {
+            System.err.println("エラー: クライアント処理中に問題発生 - " + e.getMessage());
+        }
+    }
+
+    /**
+     * TSV ファイルを JSON のリストに変換する
+     */
+    private static List<Map<String, String>> convertTsvToJson(File file) throws IOException {
+        List<Map<String, String>> jsonList = new ArrayList<>();
+
+        try (BufferedReader br = new BufferedReader(new FileReader(file))) {
+            String headerLine = br.readLine();
+            if (headerLine == null) {
+                throw new IllegalArgumentException("TSVファイルが空です");
+            }
+
+            String[] headers = headerLine.split("\t");
+
+            String line;
+            while ((line = br.readLine()) != null) {
+                String[] values = line.split("\t");
+                Map<String, String> jsonObject = new LinkedHashMap<>();
+                for (int i = 0; i < headers.length; i++) {
+                    jsonObject.put(headers[i], i < values.length ? values[i] : "");
+                }
+                jsonList.add(jsonObject);
+            }
+        }
+        return jsonList;
+    }
+
+    /**
+     * JSONリストを JSON 文字列に変換する
+     */
+    private static String listToJsonString(List<Map<String, String>> jsonData) {
+        StringBuilder json = new StringBuilder();
+        json.append("[\n");
+
+        for (int i = 0; i < jsonData.size(); i++) {
+            json.append("  ").append(mapToJson(jsonData.get(i)));
+            if (i < jsonData.size() - 1) {
+                json.append(",");
+            }
+            json.append("\n");
+        }
+
+        json.append("]");
+        return json.toString();
+    }
+
+    /**
+     * マップを JSON 文字列に変換
+     */
+    private static String mapToJson(Map<String, String> map) {
+        StringBuilder json = new StringBuilder();
+        json.append("{");
+
+        int count = 0;
+        for (Map.Entry<String, String> entry : map.entrySet()) {
+            json.append("\"").append(entry.getKey()).append("\": ")
+                .append("\"").append(entry.getValue()).append("\"");
+            if (++count < map.size()) {
+                json.append(", ");
+            }
+        }
+
+        json.append("}");
+        return json.toString();
+    }
+
+    /**
+     * エラーレスポンスを送信
+     */
+    private static void sendResponse(PrintWriter writer, int statusCode, String response) {
+        writer.println("HTTP/1.1 " + statusCode + " OK");
+        writer.println("Content-Type: text/plain; charset=UTF-8");
+        writer.println("Content-Length: " + response.getBytes().length);
+        writer.println();
+        writer.println(response);
+    }
 }
