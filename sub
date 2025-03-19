@@ -3,34 +3,85 @@ import java.util.*;
 
 public class TsvToJsonConverter {
     public static void main(String[] args) {
-        String inputFilePath = "input.tsv"; // 読み込むTSVファイルのパス
-        String outputFilePath = "output.json"; // 出力するJSONファイルのパス
+        // コマンドライン引数のチェック
+        if (args.length < 2) {
+            System.err.println("使い方: java TsvToJsonConverter <入力TSVファイル> <出力JSONファイル>");
+            System.exit(1);
+        }
+
+        // 入力TSVファイルのパス
+        String inputFilePath = args[0];
+        // 出力JSONファイルのパス
+        String outputFilePath = args[1];
+
+        // 入力ファイルの存在と読み取り権限のチェック
+        File inputFile = new File(inputFilePath);
+        if (!inputFile.exists() || !inputFile.isFile()) {
+            System.err.println("エラー: 指定されたTSVファイルが見つかりません: " + inputFilePath);
+            System.exit(1);
+        }
+        if (!inputFile.canRead()) {
+            System.err.println("エラー: 指定されたTSVファイルを読み取る権限がありません: " + inputFilePath);
+            System.exit(1);
+        }
+
+        // 出力ファイルの書き込み権限のチェック
+        File outputFile = new File(outputFilePath);
+        if (outputFile.exists() && !outputFile.canWrite()) {
+            System.err.println("エラー: 指定されたJSONファイルに書き込む権限がありません: " + outputFilePath);
+            System.exit(1);
+        }
 
         try {
+            // TSVをJSONに変換
             List<Map<String, String>> jsonData = convertTsvToJson(inputFilePath);
+            // JSONデータをファイルに書き込み
             writeJsonToFile(jsonData, outputFilePath);
             System.out.println("JSONファイルに変換しました: " + outputFilePath);
         } catch (IOException e) {
-            System.err.println("エラー: " + e.getMessage());
+            System.err.println("エラー: ファイル処理中に問題が発生しました - " + e.getMessage());
+            System.exit(1);
+        } catch (IllegalArgumentException e) {
+            System.err.println("エラー: TSVのフォーマットが不正です - " + e.getMessage());
+            System.exit(1);
+        } catch (Exception e) {
+            System.err.println("エラー: 予期しないエラーが発生しました - " + e.getMessage());
+            System.exit(1);
         }
     }
 
+    /**
+     * TSVファイルをJSONのリストに変換する
+     * @param filePath 読み込むTSVファイルのパス
+     * @return JSONのデータ（List<Map<String, String>>）
+     * @throws IOException ファイルの読み込みエラー
+     */
     private static List<Map<String, String>> convertTsvToJson(String filePath) throws IOException {
         List<Map<String, String>> jsonList = new ArrayList<>();
 
         try (BufferedReader br = new BufferedReader(new FileReader(filePath))) {
+            // 1行目をヘッダーとして取得
             String headerLine = br.readLine();
             if (headerLine == null) {
-                throw new IOException("TSVファイルが空です");
+                throw new IllegalArgumentException("TSVファイルが空です");
             }
 
+            // ヘッダーのカラム名を取得
             String[] headers = headerLine.split("\t");
+            if (headers.length == 0) {
+                throw new IllegalArgumentException("TSVのヘッダーが正しくありません");
+            }
 
             String line;
             while ((line = br.readLine()) != null) {
+                // タブで分割してデータを取得
                 String[] values = line.split("\t");
-                Map<String, String> jsonObject = new LinkedHashMap<>();
+                if (values.length > headers.length) {
+                    throw new IllegalArgumentException("データの列数がヘッダーより多い行があります: " + line);
+                }
 
+                // 1行分のデータをマップに格納
+                Map<String, String> jsonObject = new LinkedHashMap<>();
                 for (int i = 0; i < headers.length; i++) {
                     jsonObject.put(headers[i], i < values.length ? values[i] : "");
                 }
@@ -40,6 +91,12 @@ public class TsvToJsonConverter {
         return jsonList;
     }
 
+    /**
+     * JSONデータをファイルに書き込む
+     * @param jsonData JSONデータ（List<Map<String, String>>）
+     * @param filePath 出力するJSONファイルのパス
+     * @throws IOException ファイルの書き込みエラー
+     */
     private static void writeJsonToFile(List<Map<String, String>> jsonData, String filePath) throws IOException {
         try (BufferedWriter bw = new BufferedWriter(new FileWriter(filePath))) {
             bw.write("[\n");
@@ -53,9 +110,16 @@ public class TsvToJsonConverter {
             }
 
             bw.write("]\n");
+        } catch (IOException e) {
+            throw new IOException("JSONファイルの書き込み中にエラーが発生しました", e);
         }
     }
 
+    /**
+     * マップをJSON形式の文字列に変換する
+     * @param map JSONに変換するマップ
+     * @return JSON形式の文字列
+     */
     private static String mapToJson(Map<String, String> map) {
         StringBuilder json = new StringBuilder();
         json.append("{");
@@ -73,6 +137,11 @@ public class TsvToJsonConverter {
         return json.toString();
     }
 
+    /**
+     * JSON文字列として適切にエスケープする
+     * @param str エスケープする文字列
+     * @return エスケープ後の文字列
+     */
     private static String escapeJson(String str) {
         return str.replace("\\", "\\\\")
                   .replace("\"", "\\\"")
