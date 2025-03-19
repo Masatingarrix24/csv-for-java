@@ -1,0 +1,83 @@
+import java.io.*;
+import java.util.*;
+
+public class TsvToJsonConverter {
+    public static void main(String[] args) {
+        String inputFilePath = "input.tsv"; // 読み込むTSVファイルのパス
+        String outputFilePath = "output.json"; // 出力するJSONファイルのパス
+
+        try {
+            List<Map<String, String>> jsonData = convertTsvToJson(inputFilePath);
+            writeJsonToFile(jsonData, outputFilePath);
+            System.out.println("JSONファイルに変換しました: " + outputFilePath);
+        } catch (IOException e) {
+            System.err.println("エラー: " + e.getMessage());
+        }
+    }
+
+    private static List<Map<String, String>> convertTsvToJson(String filePath) throws IOException {
+        List<Map<String, String>> jsonList = new ArrayList<>();
+
+        try (BufferedReader br = new BufferedReader(new FileReader(filePath))) {
+            String headerLine = br.readLine();
+            if (headerLine == null) {
+                throw new IOException("TSVファイルが空です");
+            }
+
+            String[] headers = headerLine.split("\t");
+
+            String line;
+            while ((line = br.readLine()) != null) {
+                String[] values = line.split("\t");
+                Map<String, String> jsonObject = new LinkedHashMap<>();
+
+                for (int i = 0; i < headers.length; i++) {
+                    jsonObject.put(headers[i], i < values.length ? values[i] : "");
+                }
+                jsonList.add(jsonObject);
+            }
+        }
+        return jsonList;
+    }
+
+    private static void writeJsonToFile(List<Map<String, String>> jsonData, String filePath) throws IOException {
+        try (BufferedWriter bw = new BufferedWriter(new FileWriter(filePath))) {
+            bw.write("[\n");
+
+            for (int i = 0; i < jsonData.size(); i++) {
+                bw.write("  " + mapToJson(jsonData.get(i)));
+                if (i < jsonData.size() - 1) {
+                    bw.write(",");
+                }
+                bw.write("\n");
+            }
+
+            bw.write("]\n");
+        }
+    }
+
+    private static String mapToJson(Map<String, String> map) {
+        StringBuilder json = new StringBuilder();
+        json.append("{");
+
+        int count = 0;
+        for (Map.Entry<String, String> entry : map.entrySet()) {
+            json.append("\"").append(escapeJson(entry.getKey())).append("\": ")
+                .append("\"").append(escapeJson(entry.getValue())).append("\"");
+            if (++count < map.size()) {
+                json.append(", ");
+            }
+        }
+
+        json.append("}");
+        return json.toString();
+    }
+
+    private static String escapeJson(String str) {
+        return str.replace("\\", "\\\\")
+                  .replace("\"", "\\\"")
+                  .replace("\n", "\\n")
+                  .replace("\r", "\\r")
+                  .replace("\t", "\\t");
+    }
+}
